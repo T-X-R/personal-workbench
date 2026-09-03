@@ -95,7 +95,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; paddin
 .status-dot-configured { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
 .status-dot-preview { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 12%, transparent); }
 .status-dot-error { background: var(--negative); box-shadow: 0 0 0 3px color-mix(in srgb, var(--negative) 13%, transparent); }
-.sidebar-footer { display: flex; align-items: center; gap: 10px; padding: 12px 8px 0; border-top: 1px solid var(--line); }
+.sidebar-footer { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 12px 8px 0; border-top: 1px solid var(--line); }
 .version-label { color: var(--ink-soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
 .icon-button { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: transparent; color: var(--ink-muted); transition: background .18s ease, color .18s ease; }
 .icon-button:hover { background: var(--surface-muted); color: var(--ink); }
