@@ -28,6 +28,7 @@ import {
   UpdateIcon,
 } from '@radix-ui/react-icons'
 import { getProviderStatus, runAgent, type ProviderKind, type ProviderStatus } from './platform'
+import workbenchIcon from './assets/workbench-icon.png'
 
 type View = 'today' | 'capabilities' | 'settings'
 type Theme = 'light' | 'dark'
@@ -172,7 +173,7 @@ function Sidebar({ activeView, onNavigate, onOpenCommand, providerStatus }: { ac
   return (
     <aside className="sidebar">
       <div className="brand-lockup">
-        <div className="brand-mark" aria-hidden="true">W</div>
+        <img className="brand-mark" src={workbenchIcon} alt="" aria-hidden="true" />
         <div>
           <div className="brand-name">Workbench</div>
           <div className="brand-subtitle">Personal edition</div>

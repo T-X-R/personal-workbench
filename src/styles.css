@@ -62,7 +62,7 @@ svg { flex: none; }
 .app-shell { display: flex; min-height: 100dvh; }
 .sidebar { width: 246px; flex: 0 0 246px; display: flex; flex-direction: column; padding: 27px 15px 18px; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 86%, transparent); }
 .brand-lockup { display: flex; align-items: center; gap: 11px; padding: 0 10px 28px; }
-.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; background: var(--ink); color: var(--surface); font-size: 13px; font-weight: 800; letter-spacing: -0.08em; }
+.brand-mark { display: block; width: 30px; height: 30px; border-radius: 7px; object-fit: cover; }
 .brand-name { font-size: 14px; font-weight: 700; letter-spacing: -0.02em; }
 .brand-subtitle { margin-top: 2px; color: var(--ink-soft); font-size: 10px; letter-spacing: 0.03em; }
 .command-trigger { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 11px; margin-bottom: 30px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-strong); color: var(--ink-muted); box-shadow: var(--shadow-small); transition: border-color .18s ease, transform .18s ease; }
