@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Workbench",
@@ -18,7 +19,10 @@
         "minWidth": 980,
         "minHeight": 680,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "theme": "Light",
+        "decorations": false,
+        "transparent": true
       }
     ],
     "security": {
