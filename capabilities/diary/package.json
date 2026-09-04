@@ -1,0 +1,9 @@
+{
+  "name": "@personal-workbench/capability-diary",
+  "version": "0.1.0",
+  "type": "module",
+  "workbench": {
+    "manifest": "./manifest.json",
+    "entry": "./index.tsx"
+  }
+}

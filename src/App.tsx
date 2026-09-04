@@ -30,10 +30,12 @@ import {
   UpdateIcon,
 } from '@radix-ui/react-icons'
 import { checkProviderHealth, getProviderStatus, getSelectedProvider, setSelectedProvider, testSelectedProvider, type ProviderKind, type ProviderStatus } from './platform'
+import { createCapabilityHost, type InstalledCapability } from './capability-host'
+import { getCapabilityModule, getInstalledCapabilityPackagesWithState, installCapabilityPackage, listAvailableCapabilities, setCapabilityPackageEnabled, uninstallCapabilityPackage } from './capability-runtime'
 import i18n, { type Language } from './i18n'
 import workbenchIcon from './assets/workbench-icon.png'
 
-type View = 'today' | 'capabilities' | 'settings'
+type View = 'today' | 'capabilities' | 'settings' | 'capability'
 type Theme = 'light' | 'dark'
 
 type WorkbenchState = {
@@ -84,8 +86,16 @@ const primaryNavItems: Array<{ id: Exclude<View, 'settings'>; hint: string; icon
   { id: 'capabilities', hint: '—', icon: GridIcon },
 ]
 
-function viewLabel(t: TFunction, view: View) {
-  return view === 'today' ? t('today') : view === 'capabilities' ? t('capabilities') : t('settings')
+function viewLabel(t: TFunction, view: View, capabilityName?: string) {
+  return view === 'today' ? t('today') : view === 'capabilities' ? t('capabilities') : view === 'settings' ? t('settings') : capabilityName ?? t('capabilities')
+}
+
+function capabilityCopy(capability: { manifest: import('./capability-host').CapabilityManifest }, language: Language) {
+  const translation = capability.manifest.locales?.[language]
+  return {
+    name: translation?.name || capability.manifest.name,
+    description: translation?.description ?? capability.manifest.description,
+  }
 }
 
 function providerLabel(t: TFunction, kind: ProviderKind) {
@@ -102,6 +112,8 @@ function App() {
   const [commandOpen, setCommandOpen] = useState(false)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [installedCapabilities, setInstalledCapabilities] = useState<InstalledCapability[]>([])
+  const [activeCapabilityId, setActiveCapabilityId] = useState<string | null>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -115,6 +127,24 @@ function App() {
   useEffect(() => {
     getSelectedProvider().then(setProviderKind)
   }, [setProviderKind])
+
+  const refreshCapabilities = async () => {
+    try {
+      setInstalledCapabilities(await getInstalledCapabilityPackagesWithState())
+    } catch {
+      showNotice(t('capabilitiesLoadFailed'))
+    }
+  }
+
+  useEffect(() => {
+    void refreshCapabilities()
+  }, [])
+
+  useEffect(() => {
+    if (view === 'capability' && (!activeCapabilityId || !getCapabilityModule(activeCapabilityId))) {
+      setView('capabilities')
+    }
+  }, [activeCapabilityId, setView, view])
 
   useEffect(() => {
     setProviderStatus(null)
@@ -147,6 +177,11 @@ function App() {
     setCommandOpen(false)
   }
 
+  const openCapability = (id: string) => {
+    setActiveCapabilityId(id)
+    navigate('capability')
+  }
+
   const selectProvider = async (kind: ProviderKind) => {
     try {
       await setSelectedProvider(kind)
@@ -160,7 +195,7 @@ function App() {
     <div className="app-shell">
       <Sidebar activeView={view} onNavigate={navigate} onOpenCommand={() => setCommandOpen(true)} providerStatus={providerStatus} />
       <main className="app-main">
-        <Topbar view={view} onOpenCommand={() => setCommandOpen(true)} />
+        <Topbar view={view} capabilityName={activeCapabilityId ? capabilityCopy(getCapabilityModule(activeCapabilityId)!, language).name : undefined} onOpenCommand={() => setCommandOpen(true)} />
         <AnimatePresence mode="wait">
           <motion.div
             key={view}
@@ -170,8 +205,9 @@ function App() {
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
           >
-            {view === 'today' && <TodayPage onNavigate={navigate} onNotice={showNotice} providerStatus={providerStatus} />}
-            {view === 'capabilities' && <CapabilitiesPage onNotice={showNotice} />}
+            {view === 'today' && <TodayPage installed={installedCapabilities} onNavigate={navigate} onOpenCapability={openCapability} onNotice={showNotice} providerStatus={providerStatus} />}
+            {view === 'capabilities' && <CapabilitiesPage installed={installedCapabilities} onRefresh={refreshCapabilities} onOpenCapability={openCapability} onNotice={showNotice} />}
+            {view === 'capability' && activeCapabilityId && getCapabilityModule(activeCapabilityId) && <CapabilityPage module={getCapabilityModule(activeCapabilityId)!} />}
             {view === 'settings' && <SettingsPage onNotice={showNotice} providerStatus={providerStatus} onSelectProvider={selectProvider} onCheckProvider={async () => { const nextStatus = await checkProviderHealth(providerKind, language); setProviderStatus(nextStatus); return nextStatus }} />}
           </motion.div>
         </AnimatePresence>
@@ -227,7 +263,7 @@ function Sidebar({ activeView, onNavigate, onOpenCommand, providerStatus }: { ac
       <nav className="primary-nav" aria-label={t('mainNavigation')}>
         {primaryNavItems.map((item) => {
           const Icon = item.icon
-          const active = activeView === item.id
+          const active = activeView === item.id || (activeView === 'capability' && item.id === 'capabilities')
           return (
             <button key={item.id} className={`nav-item ${active ? 'is-active' : ''}`} onClick={() => onNavigate(item.id)}>
               <span className="nav-item-main"><Icon />{viewLabel(t, item.id)}</span>
@@ -264,9 +300,9 @@ function Sidebar({ activeView, onNavigate, onOpenCommand, providerStatus }: { ac
   )
 }
 
-function Topbar({ view, onOpenCommand }: { view: View; onOpenCommand: () => void }) {
+function Topbar({ view, capabilityName, onOpenCommand }: { view: View; capabilityName?: string; onOpenCommand: () => void }) {
   const { t } = useTranslation()
-  const label = viewLabel(t, view)
+  const label = viewLabel(t, view, capabilityName)
   return (
     <header className="topbar">
       <div className="breadcrumbs"><span>Workbench</span><ChevronRightIcon /><strong>{label}</strong></div>
@@ -278,9 +314,10 @@ function Topbar({ view, onOpenCommand }: { view: View; onOpenCommand: () => void
   )
 }
 
-function TodayPage({ onNavigate, onNotice, providerStatus }: { onNavigate: (view: View) => void; onNotice: (message: string) => void; providerStatus: ProviderStatus | null }) {
+function TodayPage({ installed, onNavigate, onOpenCapability, onNotice, providerStatus }: { installed: InstalledCapability[]; onNavigate: (view: View) => void; onOpenCapability: (id: string) => void; onNotice: (message: string) => void; providerStatus: ProviderStatus | null }) {
   const { t } = useTranslation()
   const { language, providerKind } = useWorkbench()
+  const enabled = installed.filter((capability) => capability.enabled)
   const today = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
   return (
     <div className="content-column today-page">
@@ -300,13 +337,13 @@ function TodayPage({ onNavigate, onNotice, providerStatus }: { onNavigate: (view
         <section className="surface surface-empty">
           <div className="surface-heading">
             <div><span className="section-kicker">WORKSPACE</span><h2>{t('todayStart')}</h2></div>
-            <span className="count-label">{t('zeroCapabilities')}</span>
+            <span className="count-label">{enabled.length === 0 ? t('zeroCapabilities') : language === 'zh' ? `${enabled.length} 个能力` : `${enabled.length} capabilities`}</span>
           </div>
-          <div className="empty-stage">
+          {enabled.length === 0 ? <div className="empty-stage">
             <div className="empty-orbit" aria-hidden="true"><span /><span /><span /></div>
             <div className="empty-stage-copy"><strong>{t('noEnabledCapabilities')}</strong><span>{t('installedCapabilitiesAppear')}</span></div>
             <button className="text-button" onClick={() => onNavigate('capabilities')}>{t('browseCapabilities')}<ArrowRightIcon /></button>
-          </div>
+          </div> : <div className="today-capability-list">{enabled.map((capability) => { const copy = capabilityCopy(capability, language); return <button key={capability.manifest.id} className="today-capability-link" onClick={() => onOpenCapability(capability.manifest.id)}><span><strong>{copy.name}</strong><small>{copy.description}</small></span><ArrowRightIcon /></button> })}</div>}
         </section>
 
         <section className="surface provider-surface">
@@ -332,9 +369,49 @@ function TodayPage({ onNavigate, onNotice, providerStatus }: { onNavigate: (view
   )
 }
 
-function CapabilitiesPage({ onNotice }: { onNotice: (message: string) => void }) {
+function CapabilityPage({ module }: { module: import('./capability-runtime').CapabilityModule }) {
+  const Page = module.Page
+  const host = useMemo(() => createCapabilityHost(module.manifest.id, module.manifest.permissions), [module.manifest.id, module.manifest.permissions])
+  return <Page host={host} />
+}
+
+function CapabilitiesPage({ installed, onRefresh, onOpenCapability, onNotice }: { installed: InstalledCapability[]; onRefresh: () => Promise<void>; onOpenCapability: (id: string) => void; onNotice: (message: string) => void }) {
   const { t } = useTranslation()
+  const { language } = useWorkbench()
   const [importOpen, setImportOpen] = useState(false)
+  const available = listAvailableCapabilities()
+  const installedById = new Map(installed.map((capability) => [capability.manifest.id, capability]))
+
+  const install = async (id: string) => {
+    try {
+      await installCapabilityPackage(id)
+      await onRefresh()
+      onNotice(t('capabilityInstalled'))
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : t('capabilityInstallFailed'))
+    }
+  }
+
+  const toggle = async (id: string, enabled: boolean) => {
+    try {
+      await setCapabilityPackageEnabled(id, enabled)
+      await onRefresh()
+      onNotice(enabled ? t('capabilityEnabled') : t('capabilityDisabled'))
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : t('capabilityUpdateFailed'))
+    }
+  }
+
+  const uninstall = async (id: string) => {
+    try {
+      await uninstallCapabilityPackage(id)
+      await onRefresh()
+      onNotice(t('capabilityUninstalled'))
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : t('capabilityUpdateFailed'))
+    }
+  }
+
   return (
     <div className="content-column capabilities-page">
       <div className="page-header-row">
@@ -342,11 +419,26 @@ function CapabilitiesPage({ onNotice }: { onNotice: (message: string) => void })
         <button className="primary-button" onClick={() => setImportOpen(true)}><PlusIcon />{t('importCapability')}</button>
       </div>
 
-      <div className="capability-toolbar"><div className="filter-chip active">{t('all')} <span>0</span></div><div className="filter-chip">{t('enabled')} <span>0</span></div><div className="filter-chip">{t('disabled')} <span>0</span></div><div className="toolbar-spacer" /><button className="quiet-button" onClick={() => onNotice(t('hostValidationRequired'))}><CodeIcon />{t('developerGuide')}</button></div>
+      <div className="capability-toolbar"><div className="filter-chip active">{t('all')} <span>{available.length}</span></div><div className="filter-chip">{t('enabled')} <span>{installed.filter((capability) => capability.enabled).length}</span></div><div className="filter-chip">{t('disabled')} <span>{installed.filter((capability) => !capability.enabled).length}</span></div><div className="toolbar-spacer" /><button className="quiet-button" onClick={() => onNotice(t('hostValidationRequired'))}><CodeIcon />{t('developerGuide')}</button></div>
 
-      <section className="capability-empty">
+      {installed.length === 0 && <section className="capability-empty">
         <div className="capability-empty-art" aria-hidden="true"><div className="art-window"><span /><span /><span /></div><div className="art-plus"><PlusIcon /></div></div>
         <div className="capability-empty-copy"><h2>{t('quietWorkbench')}</h2><p>{t('capabilityModulesCopy')}</p><button className="text-button" onClick={() => setImportOpen(true)}>{t('importLocalCapability')}<ArrowRightIcon /></button></div>
+      </section>}
+
+      <section className="capability-catalog" aria-label={t('availableCapabilities')}>
+        <div className="section-heading-row"><div><span className="section-kicker">AVAILABLE PACKAGES</span><h2>{t('availableCapabilities')}</h2></div><span className="muted-label">{t('notInstalledYet')}</span></div>
+        <div className="capability-cards">
+          {available.map((capability) => {
+            const current = installedById.get(capability.manifest.id)
+            const copy = capabilityCopy(capability, language)
+            return <article className="capability-card" key={capability.manifest.id}>
+              <div className="capability-card-icon"><FileTextIcon /></div>
+              <div className="capability-card-copy"><div className="capability-card-title"><h3>{copy.name}</h3><span className={`capability-status ${current ? current.enabled ? 'enabled' : 'disabled' : 'available'}`}>{current ? current.enabled ? t('enabled') : t('disabled') : t('available')}</span></div><p>{copy.description}</p><small>{capability.manifest.id} · v{capability.manifest.version}</small></div>
+              <div className="capability-card-actions">{current ? <><button className="quiet-button" onClick={() => onOpenCapability(capability.manifest.id)} disabled={!current.enabled}>{t('openCapability')}<ArrowRightIcon /></button><button className="quiet-button" onClick={() => void toggle(capability.manifest.id, !current.enabled)}>{current.enabled ? t('disableCapability') : t('enableCapability')}</button><button className="capability-uninstall" onClick={() => void uninstall(capability.manifest.id)}>{t('uninstallCapability')}</button></> : <button className="primary-button" onClick={() => void install(capability.manifest.id)}>{t('installCapability')}<ArrowRightIcon /></button>}</div>
+            </article>
+          })}
+        </div>
       </section>
 
       <div className="capability-note"><LockClosedIcon /><span>{t('trustedPackagesOnly')}</span></div>

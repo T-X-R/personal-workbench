@@ -1,34 +1,143 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { AiInvocationResult } from './platform'
+import type {
+  ActivityEventInput,
+  CapabilityEnvironment,
+  CapabilityHost,
+  CapabilityManifest,
+  CapabilityPermission,
+  CapabilityStorage,
+  InstalledCapability,
+} from '../packages/capability-contract/src'
 
-export type CapabilityEntrypoint = 'page' | 'command' | 'widget' | 'job'
-export type CapabilityPermission = 'storage' | 'activity.read' | 'activity.write' | 'ai.invoke'
+export type {
+  ActivityEventInput,
+  CapabilityEntrypoint,
+  CapabilityEnvironment,
+  CapabilityHost,
+  CapabilityLanguage,
+  CapabilityManifest,
+  CapabilityManifestTranslation,
+  CapabilityPermission,
+  CapabilityStorage,
+  CapabilityTheme,
+  InstalledCapability,
+} from '../packages/capability-contract/src'
 
-export type CapabilityManifest = {
-  id: string
-  version: string
-  name: string
-  description?: string
-  entrypoints: CapabilityEntrypoint[]
-  permissions: CapabilityPermission[]
-  minPlatformVersion: string
+const storageMemory = new Map<string, string>()
+
+function readEnvironment(): CapabilityEnvironment {
+  const language = document.documentElement.lang.toLowerCase().startsWith('en') ? 'en' : 'zh'
+  return Object.freeze({
+    language,
+    locale: language === 'en' ? 'en-US' : 'zh-CN',
+    theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
+  })
 }
 
-export type InstalledCapability = {
-  manifest: CapabilityManifest
-  enabled: boolean
+function createEnvironment(): CapabilityHost['environment'] {
+  let snapshot = readEnvironment()
+  const listeners = new Set<() => void>()
+  const observer = new MutationObserver(() => {
+    const next = readEnvironment()
+    if (next.language === snapshot.language && next.theme === snapshot.theme) return
+    snapshot = next
+    listeners.forEach((listener) => listener())
+  })
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['lang', 'data-theme'] })
+
+  return Object.freeze({
+    getSnapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  })
 }
 
-export type CapabilityHost = {
-  ai: {
-    invoke(input: string): Promise<AiInvocationResult>
+const capabilityEnvironment = createEnvironment()
+
+function readStorage(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return storageMemory.get(key) ?? null
   }
 }
 
-export function createCapabilityHost(capabilityId: string): CapabilityHost {
+function writeStorage(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    storageMemory.set(key, value)
+  }
+}
+
+function createStorage(capabilityId: string, permissions?: CapabilityPermission[]): CapabilityStorage {
+  const prefix = `personal-workbench:capability:${capabilityId}:`
+  const assertPermission = () => {
+    if (permissions && !permissions.includes('storage')) throw new Error('能力未获得 storage 权限')
+  }
+  return Object.freeze({
+    async get<T>(key: string) {
+      assertPermission()
+      const raw = readStorage(`${prefix}${key}`)
+      if (raw === null) return null
+      try {
+        return JSON.parse(raw) as T
+      } catch {
+        return null
+      }
+    },
+    async set<T>(key: string, value: T) {
+      assertPermission()
+      writeStorage(`${prefix}${key}`, JSON.stringify(value))
+    },
+    async remove(key: string) {
+      assertPermission()
+      try {
+        window.localStorage.removeItem(`${prefix}${key}`)
+      } catch {
+        storageMemory.delete(`${prefix}${key}`)
+      }
+    },
+  })
+}
+
+function createActivityWriter(capabilityId: string, permissions?: CapabilityPermission[]) {
+  const key = 'personal-workbench:activity-events'
+  return {
+    async write(event: ActivityEventInput) {
+      if (permissions && !permissions.includes('activity.write')) throw new Error('能力未获得 activity.write 权限')
+      const raw = readStorage(key)
+      let events: Array<ActivityEventInput & { id: string; occurredAt: string; source: string }> = []
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw)
+          events = Array.isArray(parsed) ? parsed as typeof events : []
+        } catch {
+          events = []
+        }
+      }
+      events.push({
+        ...event,
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        occurredAt: new Date().toISOString(),
+        source: capabilityId,
+        sensitivity: event.sensitivity ?? 'normal',
+      })
+      writeStorage(key, JSON.stringify(events.slice(-200)))
+    },
+  }
+}
+
+export function createCapabilityHost(capabilityId: string, permissions?: CapabilityPermission[]): CapabilityHost {
   if (!capabilityId.trim()) throw new Error('Capability ID is required')
 
   return Object.freeze({
+    environment: capabilityEnvironment,
+    storage: createStorage(capabilityId, permissions),
+    activity: Object.freeze(createActivityWriter(capabilityId, permissions)),
     ai: Object.freeze({
       async invoke(input: string) {
         try {

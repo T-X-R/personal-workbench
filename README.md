@@ -9,12 +9,16 @@ The initial release includes the React interface and a Tauri 2 desktop host. The
 - Fixed desktop shell with an independently scrolling content area.
 - Simplified Chinese and English interfaces powered by `i18next` and `react-i18next`.
 - Persistent theme, language, and globally selected AI Provider preferences.
+- A stable `CapabilityHost.environment` interface that lets installed Capability pages follow platform language and Light/Dark changes without importing shell state.
 - Capability registration, listing, enablement, disablement, and uninstallation.
+- A discovered `capabilities/` catalog with an installable Diary package; installed state is kept separately from package source.
 - A host-owned `ai.invoke` interface guarded by installation, enablement, and `ai.invoke` permission checks.
 - Direct Responses-compatible requests for managed API key Providers.
 - Codex CLI execution for Codex subscription tasks.
 
-Local `.capability.zip` extraction and dynamic code loading are intentionally deferred until the first production Capability is implemented.
+The first production Capability lives at `capabilities/diary`. Its editor, storage, and activity-event logic are package-owned. The Workbench discovers package entry points without importing Diary business code into the shell. Local `.capability.zip` extraction remains a later installer boundary; browser preview and the desktop registry both keep install state independent from the catalog.
+
+Installing or uninstalling a Capability changes only its registry entry. Capability data is namespaced by Capability ID and is retained on uninstall, so the platform and other installed Capabilities continue to work unchanged. The checked-in `installed-capabilities/` directory documents the separate installed-package boundary used by the desktop data directory.
 
 ## Run the development shell
 
