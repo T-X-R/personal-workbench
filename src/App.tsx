@@ -5,8 +5,12 @@ import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
+  ArchiveIcon,
   ArrowRightIcon,
+  CalendarIcon,
   CheckCircledIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -14,29 +18,33 @@ import {
   CodeIcon,
   KeyboardIcon,
   Cross2Icon,
-  DashboardIcon,
   EnterIcon,
+  ExclamationTriangleIcon,
   FileTextIcon,
   GearIcon,
   GlobeIcon,
-  GridIcon,
   LightningBoltIcon,
   LockClosedIcon,
   MagnifyingGlassIcon,
+  MagicWandIcon,
   MoonIcon,
+  Pencil2Icon,
   PlusIcon,
   ReloadIcon,
   RocketIcon,
+  CubeIcon,
   SunIcon,
   UpdateIcon,
 } from '@radix-ui/react-icons'
 import { checkProviderHealth, getProviderStatus, getSelectedProvider, setSelectedProvider, testSelectedProvider, type ProviderKind, type ProviderStatus } from './platform'
 import { createCapabilityHost, type InstalledCapability } from './capability-host'
 import { getCapabilityModule, getInstalledCapabilityPackagesWithState, installCapabilityPackage, listAvailableCapabilities, setCapabilityPackageEnabled, uninstallCapabilityPackage } from './capability-runtime'
+import { listLibraryDocuments, readLibraryDocument, type LibraryDocument, type LibraryDocumentMetadata } from './document-library'
+import { buildLibraryTree, filterLibraryTree } from './library-tree'
 import i18n, { type Language } from './i18n'
 import workbenchIcon from './assets/workbench-icon.png'
 
-type View = 'today' | 'capabilities' | 'settings' | 'capability'
+type View = 'today' | 'library' | 'capabilities' | 'settings' | 'capability'
 type Theme = 'light' | 'dark'
 type CapabilityFilter = 'all' | 'enabled' | 'disabled'
 
@@ -84,7 +92,7 @@ const useWorkbench = create<WorkbenchState>()(
 )
 
 function viewLabel(t: TFunction, view: View, capabilityName?: string) {
-  return view === 'today' ? t('today') : view === 'capabilities' ? t('capabilities') : view === 'settings' ? t('settings') : capabilityName ?? t('capabilities')
+  return view === 'today' ? t('today') : view === 'library' ? t('library') : view === 'capabilities' ? t('capabilities') : view === 'settings' ? t('settings') : capabilityName ?? t('capabilities')
 }
 
 function capabilityCopy(capability: { manifest: import('./capability-host').CapabilityManifest }, language: Language) {
@@ -93,6 +101,12 @@ function capabilityCopy(capability: { manifest: import('./capability-host').Capa
     name: translation?.name || capability.manifest.name,
     description: translation?.description ?? capability.manifest.description,
   }
+}
+
+function CapabilityIcon({ name }: { name?: string }) {
+  if (name === 'pencil-2') return <Pencil2Icon />
+  if (name === 'magic-wand') return <MagicWandIcon />
+  return <FileTextIcon />
 }
 
 function providerLabel(t: TFunction, kind: ProviderKind) {
@@ -208,6 +222,7 @@ function App() {
               transition={{ duration: 0.18, ease: 'easeOut' }}
             >
               {view === 'today' && <TodayPage installed={installedCapabilities} onNavigate={navigate} onOpenCapability={openCapability} onNotice={showNotice} providerStatus={providerStatus} />}
+              {view === 'library' && <LibraryPage installed={installedCapabilities} />}
               {view === 'capabilities' && <CapabilitiesPage installed={installedCapabilities} onRefresh={refreshCapabilities} onOpenCapability={openCapability} onNotice={showNotice} />}
               {view === 'capability' && activeCapabilityId && getCapabilityModule(activeCapabilityId) && <CapabilityPage module={getCapabilityModule(activeCapabilityId)!} />}
               {view === 'settings' && <SettingsPage onNotice={showNotice} providerStatus={providerStatus} onSelectProvider={selectProvider} onCheckProvider={async () => { const nextStatus = await checkProviderHealth(providerKind, language); setProviderStatus(nextStatus); return nextStatus }} />}
@@ -287,19 +302,23 @@ function Sidebar({ activeView, activeCapabilityId, installed, onNavigate, onOpen
       <div className="sidebar-label">{t('workspace')}</div>
       <nav className="primary-nav" aria-label={t('mainNavigation')}>
         <button className={`nav-item ${activeView === 'today' ? 'is-active' : ''}`} aria-current={activeView === 'today' ? 'page' : undefined} onClick={() => onNavigate('today')}>
-          <span className="nav-item-main"><DashboardIcon />{t('today')}</span>
+          <span className="nav-item-main"><CalendarIcon />{t('today')}</span>
           <span className="nav-hint">01</span>
+        </button>
+        <button className={`nav-item ${activeView === 'library' ? 'is-active' : ''}`} aria-current={activeView === 'library' ? 'page' : undefined} onClick={() => onNavigate('library')}>
+          <span className="nav-item-main"><ArchiveIcon />{t('library')}</span>
+          <span className="nav-hint">02</span>
         </button>
         {enabledCapabilities.map((capability) => {
           const active = activeView === 'capability' && activeCapabilityId === capability.manifest.id
           return (
             <button key={capability.manifest.id} className={`nav-item ${active ? 'is-active' : ''}`} aria-current={active ? 'page' : undefined} onClick={() => onOpenCapability(capability.manifest.id)}>
-              <span className="nav-item-main"><FileTextIcon />{capabilityCopy(capability, language).name}</span>
+              <span className="nav-item-main"><CapabilityIcon name={capability.manifest.icon} />{capabilityCopy(capability, language).name}</span>
             </button>
           )
         })}
         <button className={`nav-item ${activeView === 'capabilities' ? 'is-active' : ''}`} aria-current={activeView === 'capabilities' ? 'page' : undefined} onClick={() => onNavigate('capabilities')}>
-          <span className="nav-item-main"><GridIcon />{t('capabilities')}</span>
+          <span className="nav-item-main"><CubeIcon />{t('capabilities')}</span>
           <span className="nav-hint">—</span>
         </button>
       </nav>
@@ -394,8 +413,165 @@ function TodayPage({ installed, onNavigate, onOpenCapability, onNotice, provider
 
 function CapabilityPage({ module }: { module: import('./capability-runtime').CapabilityModule }) {
   const Page = module.Page
-  const host = useMemo(() => createCapabilityHost(module.manifest.id, module.manifest.permissions), [module.manifest.id, module.manifest.permissions])
+  const host = useMemo(() => createCapabilityHost(module.manifest.id, module.manifest.permissions, module.manifest.name), [module.manifest.id, module.manifest.name, module.manifest.permissions])
   return <Page host={host} />
+}
+
+function LibraryPage({ installed }: { installed: InstalledCapability[] }) {
+  const { t } = useTranslation()
+  const { language } = useWorkbench()
+  const [documents, setDocuments] = useState<LibraryDocumentMetadata[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedDocument, setSelectedDocument] = useState<LibraryDocument | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [documentError, setDocumentError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [collapsedCapabilities, setCollapsedCapabilities] = useState<Set<string>>(() => new Set())
+  const [collapsedCollections, setCollapsedCollections] = useState<Set<string>>(() => new Set())
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(() => new Set())
+  const installedNames = useMemo(() => new Map(installed.map((capability) => [
+    capability.manifest.id,
+    capabilityCopy(capability, language).name,
+  ])), [installed, language])
+  const tree = useMemo(() => buildLibraryTree(documents, installedNames), [documents, installedNames])
+  const filteredTree = useMemo(() => filterLibraryTree(tree, query), [tree, query])
+  const searching = query.trim().length > 0
+
+  const toggleKey = (current: Set<string>, key: string) => {
+    const next = new Set(current)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  }
+
+  useEffect(() => {
+    let current = true
+    setLoading(true)
+    listLibraryDocuments()
+      .then((next) => {
+        if (!current) return
+        setDocuments(next)
+        setSelectedId((previous) => previous && next.some((item) => item.id === previous) ? previous : next[0]?.id ?? null)
+        setError(null)
+      })
+      .catch(() => current && setError(t('libraryLoadFailed')))
+      .finally(() => current && setLoading(false))
+    return () => { current = false }
+  }, [t])
+
+  useEffect(() => {
+    let current = true
+    setSelectedDocument(null)
+    setDocumentError(null)
+    if (!selectedId) return () => { current = false }
+    readLibraryDocument(selectedId)
+      .then((document) => current && setSelectedDocument(document))
+      .catch(() => current && setDocumentError(t('libraryDocumentLoadFailed')))
+    return () => { current = false }
+  }, [selectedId, t])
+
+  const locale = language === 'zh' ? 'zh-CN' : 'en-US'
+  const monthLabel = (month: string) => new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long' })
+    .format(new Date(`${month}-01T12:00:00`))
+
+  return (
+    <div className="content-column library-page">
+      <div className="page-header-row">
+        <div><span className="eyebrow">DOCUMENT LIBRARY</span><h1>{t('library')}</h1><p>{t('libraryIntro')}</p></div>
+        <span className="library-total">{documents.length} {t('libraryDocuments')}</span>
+      </div>
+
+      <div className="library-workspace">
+        {loading ? <div className="library-state"><ReloadIcon className="spin" /><span>{t('libraryLoading')}</span></div>
+          : error && documents.length === 0 ? <div className="library-state library-state-error"><ExclamationTriangleIcon /><span>{error}</span></div>
+            : documents.length === 0 ? <div className="library-state"><ArchiveIcon /><strong>{t('libraryEmpty')}</strong><span>{t('libraryEmptyHint')}</span></div>
+              : <>
+                <nav className="library-tree" aria-label={t('libraryTree')}>
+                  <label className="library-tree-search">
+                    <MagnifyingGlassIcon />
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder={t('librarySearchPlaceholder')}
+                      aria-label={t('librarySearch')}
+                    />
+                  </label>
+                  {filteredTree.length === 0
+                    ? <div className="library-search-empty">{t('libraryNoSearchResults')}</div>
+                    : filteredTree.map((capability) => {
+                      const capabilityExpanded = searching || !collapsedCapabilities.has(capability.capabilityId)
+                      return <section className="library-capability-node" key={capability.capabilityId}>
+                        <button
+                          type="button"
+                          className="library-capability-heading"
+                          aria-expanded={capabilityExpanded}
+                          disabled={searching}
+                          onClick={() => setCollapsedCapabilities((current) => toggleKey(current, capability.capabilityId))}
+                        >
+                          <ChevronRightIcon className={`library-tree-chevron ${capabilityExpanded ? 'is-expanded' : ''}`} />
+                          <ArchiveIcon className="library-capability-icon" />
+                          <span><strong>{capability.capabilityName}</strong><small>{capability.installed ? t('libraryInstalledSource') : t('libraryUninstalledSource')}</small></span>
+                          <em>{capability.documentCount}</em>
+                        </button>
+                        {capabilityExpanded && capability.collections.map((collection) => {
+                          const collectionId = `${capability.capabilityId}/${collection.key}`
+                          const collectionExpanded = searching || !collapsedCollections.has(collectionId)
+                          return <div className="library-collection-node" key={collection.key}>
+                            <button
+                              type="button"
+                              className="library-collection-heading"
+                              aria-expanded={collectionExpanded}
+                              disabled={searching}
+                              onClick={() => setCollapsedCollections((current) => toggleKey(current, collectionId))}
+                            >
+                              <ChevronRightIcon className={`library-tree-chevron ${collectionExpanded ? 'is-expanded' : ''}`} />
+                              <strong>{collection.name}</strong><span>{collection.documentCount}</span>
+                            </button>
+                            {collectionExpanded && collection.months.map((month) => {
+                              const monthId = `${collectionId}/${month.key}`
+                              const monthExpanded = searching || !collapsedMonths.has(monthId)
+                              return <div className="library-month-node" key={month.key}>
+                                <button
+                                  type="button"
+                                  className="library-month-label"
+                                  aria-expanded={monthExpanded}
+                                  disabled={searching}
+                                  onClick={() => setCollapsedMonths((current) => toggleKey(current, monthId))}
+                                >
+                                  <ChevronRightIcon className={`library-tree-chevron ${monthExpanded ? 'is-expanded' : ''}`} />
+                                  <span>{monthLabel(month.key)}</span>
+                                </button>
+                                {monthExpanded && month.documents.map((document) => <button
+                                  type="button"
+                                  key={document.id}
+                                  className={`library-document-link ${selectedId === document.id ? 'is-active' : ''}`}
+                                  onClick={() => setSelectedId(document.id)}
+                                >
+                                  <FileTextIcon /><span><strong>{document.title}</strong><small>{document.documentDate}</small></span>
+                                </button>)}
+                              </div>
+                            })}
+                          </div>
+                        })}
+                      </section>
+                    })}
+                </nav>
+
+                <article className="library-reader">
+                  {selectedDocument ? <>
+                    <header className="library-reader-header">
+                      <div><span>{selectedDocument.collectionName}</span><h2>{selectedDocument.title}</h2></div>
+                      <div className="library-reader-meta"><span>{installedNames.get(selectedDocument.capabilityId) ?? selectedDocument.capabilityName}</span><small>{t('libraryUpdated')} {new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(selectedDocument.updatedAt))}</small></div>
+                    </header>
+                    <div className="library-reader-content"><Markdown remarkPlugins={[remarkGfm]}>{selectedDocument.content}</Markdown></div>
+                  </> : documentError ? <div className="library-state library-state-error"><ExclamationTriangleIcon /><span>{documentError}</span></div> : <div className="library-state"><FileTextIcon /><span>{t('librarySelectDocument')}</span></div>}
+                </article>
+              </>}
+      </div>
+    </div>
+  )
 }
 
 function CapabilitiesPage({ installed, onRefresh, onOpenCapability, onNotice }: { installed: InstalledCapability[]; onRefresh: () => Promise<void>; onOpenCapability: (id: string) => void; onNotice: (message: string) => void }) {
@@ -474,7 +650,7 @@ function CapabilitiesPage({ installed, onRefresh, onOpenCapability, onNotice }: 
             const current = installedById.get(capability.manifest.id)
             const copy = capabilityCopy(capability, language)
             return <article className="capability-card" key={capability.manifest.id}>
-              <div className="capability-card-icon"><FileTextIcon /></div>
+              <div className="capability-card-icon"><CapabilityIcon name={capability.manifest.icon} /></div>
               <div className="capability-card-copy"><div className="capability-card-title"><h3>{copy.name}</h3><span className={`capability-status ${current ? current.enabled ? 'enabled' : 'disabled' : 'available'}`}>{current ? current.enabled ? t('enabled') : t('disabled') : t('available')}</span></div><p>{copy.description}</p><small>{capability.manifest.id} · v{capability.manifest.version}</small></div>
               <div className="capability-card-actions">{current ? <><button className="quiet-button" onClick={() => onOpenCapability(capability.manifest.id)} disabled={!current.enabled}>{t('openCapability')}<ArrowRightIcon /></button><button className="quiet-button" onClick={() => void toggle(capability.manifest.id, !current.enabled)}>{current.enabled ? t('disableCapability') : t('enableCapability')}</button><button className="capability-uninstall" onClick={() => void uninstall(capability.manifest.id)}>{t('uninstallCapability')}</button></> : <button className="primary-button" onClick={() => void install(capability.manifest.id)}>{t('installCapability')}<ArrowRightIcon /></button>}</div>
             </article>
@@ -571,8 +747,9 @@ function CommandPalette({ onClose, onNavigate, onNotice, theme, onToggleTheme }:
   useEffect(() => inputRef.current?.focus(), [])
 
   const commands = useMemo(() => [
-    { label: t('openToday'), hint: t('navigation'), icon: DashboardIcon, action: () => onNavigate('today') },
-    { label: t('openCapabilities'), hint: t('navigation'), icon: GridIcon, action: () => onNavigate('capabilities') },
+    { label: t('openToday'), hint: t('navigation'), icon: CalendarIcon, action: () => onNavigate('today') },
+    { label: t('openLibrary'), hint: t('navigation'), icon: ArchiveIcon, action: () => onNavigate('library') },
+    { label: t('openCapabilities'), hint: t('navigation'), icon: CubeIcon, action: () => onNavigate('capabilities') },
     { label: t('openSettings'), hint: t('navigation'), icon: GearIcon, action: () => onNavigate('settings') },
     { label: theme === 'light' ? t('switchToDark') : t('switchToLight'), hint: t('appearanceHint'), icon: theme === 'light' ? MoonIcon : SunIcon, action: () => { onToggleTheme(); onClose() } },
     { label: t('viewPlatformStatus'), hint: t('system'), icon: LightningBoltIcon, action: () => { onNavigate('settings'); onNotice(t('providerLocated')) } },

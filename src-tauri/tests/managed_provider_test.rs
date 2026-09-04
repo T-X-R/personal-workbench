@@ -64,7 +64,7 @@ fn rejects_a_wire_protocol_the_gateway_does_not_support() {
 }
 
 #[test]
-fn invokes_the_responses_endpoint_without_exposing_credentials_to_the_caller() {
+fn invokes_a_gzip_responses_endpoint_without_exposing_credentials_to_the_caller() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
   let address = listener.local_addr().expect("test server should have an address");
   let (request_tx, request_rx) = mpsc::channel();
@@ -77,14 +77,20 @@ fn invokes_the_responses_endpoint_without_exposing_credentials_to_the_caller() {
       .send(String::from_utf8(request).expect("test request should be UTF-8"))
       .expect("test request should be captured");
 
-    let body = r#"{"output":[{"type":"message","content":[{"type":"output_text","text":"Provider ready"}]}]}"#;
+    let body = [
+      31, 139, 8, 0, 0, 0, 0, 0, 0, 19, 171, 86, 202, 47, 45, 41, 40, 45, 81, 178, 138,
+      174, 86, 42, 169, 44, 72, 85, 178, 82, 202, 77, 45, 46, 78, 76, 79, 85, 210, 81, 74,
+      206, 207, 43, 73, 205, 67, 145, 132, 40, 143, 47, 73, 173, 40, 81, 210, 81, 2, 83, 86,
+      74, 1, 69, 249, 101, 153, 41, 169, 69, 10, 69, 169, 137, 41, 149, 74, 181, 177, 181,
+      177, 181, 0, 85, 193, 100, 87, 90, 0, 0, 0,
+    ];
     write!(
       stream,
-      "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+      "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
       body.len(),
-      body,
     )
-    .expect("test response should be written");
+    .expect("test response headers should be written");
+    stream.write_all(&body).expect("test response body should be written");
   });
 
   let codex_home = test_data_dir("invoke");

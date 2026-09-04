@@ -1,10 +1,17 @@
 pub mod capability_runtime;
+pub mod codex_session_source;
+pub mod document_library;
 pub mod managed_provider;
 
 use capability_runtime::{CapabilityManifest, InstalledCapability, PlatformState};
+use codex_session_source::{read_daily_files, CodexDailySessionFiles};
+use document_library::{DocumentPublication, LibraryDocument, LibraryDocumentMetadata};
 use managed_provider::{invoke, load_codex_api_profile, ModelResult};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+
+const MAX_LOG_FILE_SIZE: u128 = 2_000_000;
+const LOG_FILES_TO_KEEP: usize = 3;
 
 #[derive(Debug, Serialize)]
 struct ProviderStatus {
@@ -19,6 +26,19 @@ struct CapabilityAiRequest {
   #[serde(rename = "capabilityId")]
   capability_id: String,
   input: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CapabilityCodexSessionsRequest {
+  #[serde(rename = "capabilityId")]
+  capability_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CapabilityDocumentPublishRequest {
+  #[serde(rename = "capabilityId")]
+  capability_id: String,
+  document: DocumentPublication,
 }
 
 fn codex_home() -> std::path::PathBuf {
@@ -93,6 +113,13 @@ fn localize_provider_error(detail: String, english: bool) -> String {
     "API 配置缺少可用凭据" => "The API configuration has no usable credential".into(),
     "无法初始化 Provider 连接" => "Could not initialize the Provider connection".into(),
     "无法连接 Provider 端点" => "Could not connect to the Provider endpoint".into(),
+    "无法连接 Provider 端点（TLS 或网络握手失败，已重试）" => {
+      "Could not connect to the Provider endpoint after retrying the TLS or network handshake".into()
+    }
+    "连接 Provider 端点超时" => "The Provider connection timed out".into(),
+    "Provider 生成响应超时" => "The Provider response timed out".into(),
+    "Provider 请求发送失败" => "Could not send the Provider request".into(),
+    "读取 Provider 响应失败" => "Could not read the Provider response".into(),
     "Provider 拒绝了当前凭据" => "The Provider rejected the current credential".into(),
     "Provider 不支持配置的 Responses 端点" => {
       "The Provider does not support the configured Responses endpoint".into()
@@ -282,6 +309,14 @@ fn install_capability(
 }
 
 #[tauri::command]
+fn update_capability(
+  manifest: CapabilityManifest,
+  state: tauri::State<'_, PlatformState>,
+) -> Result<InstalledCapability, String> {
+  state.update_capability(manifest)
+}
+
+#[tauri::command]
 fn list_capabilities(
   state: tauri::State<'_, PlatformState>,
 ) -> Result<Vec<InstalledCapability>, String> {
@@ -306,6 +341,43 @@ fn uninstall_capability(
 }
 
 #[tauri::command]
+fn capability_documents_publish(
+  request: CapabilityDocumentPublishRequest,
+  state: tauri::State<'_, PlatformState>,
+) -> Result<(), String> {
+  let capability_id = request.capability_id;
+  let result = state.publish_document(&capability_id, request.document);
+  match &result {
+    Ok(document) => log::info!(
+      target: "workbench::documents",
+      "document.publish capability_id={capability_id} document_id={} bytes={}",
+      document.id,
+      document.size_bytes,
+    ),
+    Err(_) => log::warn!(
+      target: "workbench::documents",
+      "document.publish_error capability_id={capability_id}",
+    ),
+  }
+  result.map(|_| ())
+}
+
+#[tauri::command]
+fn library_list_documents(
+  state: tauri::State<'_, PlatformState>,
+) -> Result<Vec<LibraryDocumentMetadata>, String> {
+  state.list_library_documents()
+}
+
+#[tauri::command]
+fn library_read_document(
+  id: String,
+  state: tauri::State<'_, PlatformState>,
+) -> Result<LibraryDocument, String> {
+  state.read_library_document(&id)
+}
+
+#[tauri::command]
 async fn test_selected_provider(
   language: String,
   state: tauri::State<'_, PlatformState>,
@@ -321,8 +393,83 @@ async fn capability_ai_invoke(
   request: CapabilityAiRequest,
   state: tauri::State<'_, PlatformState>,
 ) -> Result<ModelResult, String> {
-  let provider_kind = state.provider_for_capability(&request.capability_id)?;
-  invoke_with_provider(request.input, &provider_kind).await
+  let started = std::time::Instant::now();
+  let capability_id = request.capability_id;
+  let input_bytes = request.input.len();
+  let provider_kind = match state.provider_for_capability(&capability_id) {
+    Ok(provider_kind) => provider_kind,
+    Err(detail) => {
+      log::warn!(
+        target: "workbench::capability",
+        "ai.denied capability_id={capability_id} input_bytes={input_bytes}"
+      );
+      return Err(detail);
+    }
+  };
+  log::info!(
+    target: "workbench::capability",
+    "ai.start capability_id={capability_id} provider_kind={provider_kind} input_bytes={input_bytes}"
+  );
+  let result = invoke_with_provider(request.input, &provider_kind).await;
+  match &result {
+    Ok(output) => log::info!(
+      target: "workbench::capability",
+      "ai.complete capability_id={capability_id} provider_kind={provider_kind} output_bytes={} elapsed_ms={}",
+      output.output.len(),
+      started.elapsed().as_millis(),
+    ),
+    Err(_) => log::warn!(
+      target: "workbench::capability",
+      "ai.error capability_id={capability_id} provider_kind={provider_kind} elapsed_ms={}",
+      started.elapsed().as_millis(),
+    ),
+  }
+  result
+}
+
+#[tauri::command]
+async fn capability_codex_sessions_read_daily_files(
+  request: CapabilityCodexSessionsRequest,
+  state: tauri::State<'_, PlatformState>,
+) -> Result<CodexDailySessionFiles, String> {
+  let started = std::time::Instant::now();
+  if let Err(detail) = state.authorize_permission(
+    &request.capability_id,
+    capability_runtime::CapabilityPermission::CodexSessionsRead,
+  ) {
+    log::warn!(
+      target: "workbench::codex_sessions",
+      "scan.denied capability_id={}",
+      request.capability_id,
+    );
+    return Err(detail);
+  }
+  let home = codex_home();
+  let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+  let capability_id = request.capability_id;
+  let scan_date = date.clone();
+  log::info!(
+    target: "workbench::codex_sessions",
+    "scan.start capability_id={capability_id} date={scan_date}"
+  );
+  let result = tauri::async_runtime::spawn_blocking(move || read_daily_files(&home, &date))
+    .await
+    .map_err(|_| "读取 Codex sessions 的任务意外结束".to_string())?;
+  match &result {
+    Ok(files) => log::info!(
+      target: "workbench::codex_sessions",
+      "scan.complete capability_id={capability_id} date={scan_date} files={} bytes={} elapsed_ms={}",
+      files.files.len(),
+      files.files.iter().map(|file| file.content.len()).sum::<usize>(),
+      started.elapsed().as_millis(),
+    ),
+    Err(_) => log::warn!(
+      target: "workbench::codex_sessions",
+      "scan.error capability_id={capability_id} date={scan_date} elapsed_ms={}",
+      started.elapsed().as_millis(),
+    ),
+  }
+  result
 }
 
 async fn invoke_with_provider(input: String, provider_kind: &str) -> Result<ModelResult, String> {
@@ -391,17 +538,24 @@ fn extract_codex_output(stdout: &str) -> Option<String> {
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
+      app.handle().plugin(
+        tauri_plugin_log::Builder::default()
+          .level(log::LevelFilter::Info)
+          .filter(|metadata| metadata.target().starts_with("workbench::"))
+          .max_file_size(MAX_LOG_FILE_SIZE)
+          .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(LOG_FILES_TO_KEEP))
+          .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+          .build(),
+      )?;
+      log::info!(
+        target: "workbench::lifecycle",
+        "app.start version={}",
+        env!("CARGO_PKG_VERSION"),
+      );
       let data_dir = app.path().app_data_dir()?;
       let platform_state = PlatformState::load(data_dir)
         .map_err(std::io::Error::other)?;
       app.manage(platform_state);
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -410,11 +564,16 @@ pub fn run() {
       get_selected_provider,
       set_selected_provider,
       install_capability,
+      update_capability,
       list_capabilities,
       set_capability_enabled,
       uninstall_capability,
       test_selected_provider,
       capability_ai_invoke,
+      capability_codex_sessions_read_daily_files,
+      capability_documents_publish,
+      library_list_documents,
+      library_read_document,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

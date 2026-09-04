@@ -1,7 +1,8 @@
 {
   "id": "com.personal.diary",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "日记",
+  "icon": "pencil-2",
   "description": "记录每天值得留下的事情。",
   "locales": {
     "zh": {
@@ -14,6 +15,6 @@
     }
   },
   "entrypoints": ["page", "widget"],
-  "permissions": ["storage", "activity.write"],
+  "permissions": ["storage", "activity.write", "documents.publish"],
   "minPlatformVersion": "0.1.0"
 }

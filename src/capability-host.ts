@@ -7,8 +7,11 @@ import type {
   CapabilityManifest,
   CapabilityPermission,
   CapabilityStorage,
+  CodexDailySessionFiles,
+  DocumentPublication,
   InstalledCapability,
 } from '../packages/capability-contract/src'
+import { publishCapabilityDocument } from './document-library'
 
 export type {
   ActivityEventInput,
@@ -21,6 +24,9 @@ export type {
   CapabilityPermission,
   CapabilityStorage,
   CapabilityTheme,
+  CodexDailySessionFiles,
+  CodexSessionTextFile,
+  DocumentPublication,
   InstalledCapability,
 } from '../packages/capability-contract/src'
 
@@ -131,13 +137,37 @@ function createActivityWriter(capabilityId: string, permissions?: CapabilityPerm
   }
 }
 
-export function createCapabilityHost(capabilityId: string, permissions?: CapabilityPermission[]): CapabilityHost {
+export function createCapabilityHost(capabilityId: string, permissions?: CapabilityPermission[], capabilityName = capabilityId): CapabilityHost {
   if (!capabilityId.trim()) throw new Error('Capability ID is required')
 
   return Object.freeze({
     environment: capabilityEnvironment,
     storage: createStorage(capabilityId, permissions),
+    documents: Object.freeze({
+      async publish(document: DocumentPublication): Promise<void> {
+        if (permissions && !permissions.includes('documents.publish')) {
+          throw new Error('能力未获得 documents.publish 权限')
+        }
+        await publishCapabilityDocument(capabilityId, capabilityName, document)
+      },
+    }),
     activity: Object.freeze(createActivityWriter(capabilityId, permissions)),
+    codex: Object.freeze({
+      sessions: Object.freeze({
+        async readTodayFiles() {
+          if (permissions && !permissions.includes('codex.sessions.read')) {
+            throw new Error('能力未获得 codex.sessions.read 权限')
+          }
+          try {
+            return await invoke<CodexDailySessionFiles>('capability_codex_sessions_read_daily_files', {
+              request: { capabilityId },
+            })
+          } catch (error) {
+            throw new Error(typeof error === 'string' ? error : '读取 Codex sessions 失败')
+          }
+        },
+      }),
+    }),
     ai: Object.freeze({
       async invoke(input: string) {
         try {
@@ -154,6 +184,10 @@ export function createCapabilityHost(capabilityId: string, permissions?: Capabil
 
 export async function installCapability(manifest: CapabilityManifest): Promise<InstalledCapability> {
   return invoke<InstalledCapability>('install_capability', { manifest })
+}
+
+export async function updateCapability(manifest: CapabilityManifest): Promise<InstalledCapability> {
+  return invoke<InstalledCapability>('update_capability', { manifest })
 }
 
 export async function listCapabilities(): Promise<InstalledCapability[]> {

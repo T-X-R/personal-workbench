@@ -57,3 +57,27 @@ The runtime that executes agent tasks through the local Codex CLI and its subscr
 
 **Workspace**:
 The personal context shared by Capabilities and Activity Events. The first release has one default Workspace without coupling Capabilities to specific pages.
+
+**Document Library**:
+The Workbench-owned, long-lived space for documents published by Capabilities. Documents remain available when their Source Capability is disabled or uninstalled.
+_Avoid_: Capability storage, file dump
+
+**Document Gateway**:
+The Capability Host interface through which an authorized Capability publishes durable document content without knowing how the Workbench stores, indexes, or presents it.
+_Avoid_: Library API, file writer
+
+**Document Publication**:
+A Capability's request to create or update a durable Markdown document using a stable identity and descriptive metadata.
+_Avoid_: AI response, file path
+
+**Library Document**:
+A named Markdown artifact created from a Document Publication and retained by the Document Library under a Source Capability and Document Collection.
+_Avoid_: Activity Event, attachment
+
+**Document Collection**:
+A stable grouping inside one Source Capability's Document Library namespace. It is metadata managed by Workbench, not an arbitrary filesystem path supplied by a Capability.
+_Avoid_: Folder path, directory string
+
+**Source Capability**:
+The Capability identity recorded as the producer of a Library Document. It is provenance only; uninstalling the Capability does not delete its documents.
+_Avoid_: Owner

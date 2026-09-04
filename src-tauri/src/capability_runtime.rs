@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::document_library::{self, DocumentPublication, LibraryDocument, LibraryDocumentMetadata};
 use std::{
   collections::BTreeMap,
   fs,
@@ -54,6 +55,10 @@ pub enum CapabilityPermission {
   ActivityWrite,
   #[serde(rename = "ai.invoke")]
   AiInvoke,
+  #[serde(rename = "codex.sessions.read")]
+  CodexSessionsRead,
+  #[serde(rename = "documents.publish")]
+  DocumentsPublish,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,6 +171,31 @@ impl PlatformState {
       .map_err(|_| "能力注册表暂时不可用".to_string())
   }
 
+  pub fn update_capability(
+    &self,
+    manifest: CapabilityManifest,
+  ) -> Result<InstalledCapability, String> {
+    validate_manifest(&manifest)?;
+    let mut registry = self
+      .registry
+      .write()
+      .map_err(|_| "能力注册表暂时不可用".to_string())?;
+    let mut next = registry.clone();
+    let capability = next
+      .capabilities
+      .iter_mut()
+      .find(|capability| capability.manifest.id == manifest.id)
+      .ok_or_else(|| "能力尚未安装".to_string())?;
+    capability.manifest = manifest;
+    let updated = capability.clone();
+    persist_json(
+      &self.data_dir.join(INSTALLED_CAPABILITIES_DIR).join(REGISTRY_FILE),
+      &next,
+    )?;
+    *registry = next;
+    Ok(updated)
+  }
+
   pub fn set_capability_enabled(&self, id: &str, enabled: bool) -> Result<(), String> {
     let mut registry = self
       .registry
@@ -205,7 +235,39 @@ impl PlatformState {
     Ok(())
   }
 
+  pub fn publish_document(
+    &self,
+    capability_id: &str,
+    document: DocumentPublication,
+  ) -> Result<LibraryDocumentMetadata, String> {
+    self.authorize_permission(capability_id, CapabilityPermission::DocumentsPublish)?;
+    let capability_name = self.active_capability_name(capability_id)?;
+    document_library::publish_document(
+      &self.data_dir,
+      capability_id,
+      &capability_name,
+      document,
+    )
+  }
+
+  pub fn list_library_documents(&self) -> Result<Vec<LibraryDocumentMetadata>, String> {
+    document_library::list_documents(&self.data_dir)
+  }
+
+  pub fn read_library_document(&self, id: &str) -> Result<LibraryDocument, String> {
+    document_library::read_document(&self.data_dir, id)
+  }
+
   pub fn provider_for_capability(&self, id: &str) -> Result<String, String> {
+    self.authorize_permission(id, CapabilityPermission::AiInvoke)?;
+    self.selected_provider()
+  }
+
+  pub fn authorize_permission(
+    &self,
+    id: &str,
+    permission: CapabilityPermission,
+  ) -> Result<(), String> {
     let registry = self
       .registry
       .read()
@@ -221,13 +283,40 @@ impl PlatformState {
     if !capability
       .manifest
       .permissions
-      .contains(&CapabilityPermission::AiInvoke)
+      .contains(&permission)
     {
-      return Err("能力未获得 ai.invoke 权限".into());
+      return Err(format!("能力未获得 {} 权限", permission.as_str()));
     }
-    drop(registry);
+    Ok(())
+  }
 
-    self.selected_provider()
+  fn active_capability_name(&self, id: &str) -> Result<String, String> {
+    let registry = self
+      .registry
+      .read()
+      .map_err(|_| "能力注册表暂时不可用".to_string())?;
+    let capability = registry
+      .capabilities
+      .iter()
+      .find(|capability| capability.manifest.id == id)
+      .ok_or_else(|| "能力尚未安装".to_string())?;
+    if !capability.enabled {
+      return Err("能力已停用".into());
+    }
+    Ok(capability.manifest.name.clone())
+  }
+}
+
+impl CapabilityPermission {
+  fn as_str(self) -> &'static str {
+    match self {
+      Self::Storage => "storage",
+      Self::ActivityRead => "activity.read",
+      Self::ActivityWrite => "activity.write",
+      Self::AiInvoke => "ai.invoke",
+      Self::CodexSessionsRead => "codex.sessions.read",
+      Self::DocumentsPublish => "documents.publish",
+    }
   }
 }
 
