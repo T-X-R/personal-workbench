@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+  collections::BTreeMap,
   fs,
   path::{Path, PathBuf},
   sync::RwLock,
@@ -7,6 +8,7 @@ use std::{
 
 const SETTINGS_FILE: &str = "platform-settings.json";
 const REGISTRY_FILE: &str = "capability-registry.json";
+const INSTALLED_CAPABILITIES_DIR: &str = "installed-capabilities";
 const DEFAULT_PROVIDER: &str = "codex-api";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -18,10 +20,19 @@ pub struct CapabilityManifest {
   #[serde(default)]
   pub description: String,
   #[serde(default)]
+  pub locales: BTreeMap<String, CapabilityManifestTranslation>,
+  #[serde(default)]
   pub entrypoints: Vec<CapabilityEntrypoint>,
   #[serde(default)]
   pub permissions: Vec<CapabilityPermission>,
   pub min_platform_version: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilityManifestTranslation {
+  pub name: String,
+  #[serde(default)]
+  pub description: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,7 +91,15 @@ pub struct PlatformState {
 impl PlatformState {
   pub fn load(data_dir: PathBuf) -> Result<Self, String> {
     let settings = load_json(&data_dir.join(SETTINGS_FILE))?;
-    let registry = load_json(&data_dir.join(REGISTRY_FILE))?;
+    let installed_registry_path = data_dir.join(INSTALLED_CAPABILITIES_DIR).join(REGISTRY_FILE);
+    let registry_path = if installed_registry_path.is_file() {
+      installed_registry_path
+    } else {
+      // Keep existing installations visible while moving the registry into
+      // the isolated installed-capabilities directory.
+      data_dir.join(REGISTRY_FILE)
+    };
+    let registry = load_json(&registry_path)?;
     Ok(Self {
       data_dir,
       settings: RwLock::new(settings),
@@ -132,7 +151,10 @@ impl PlatformState {
     };
     let mut next = registry.clone();
     next.capabilities.push(installed.clone());
-    persist_json(&self.data_dir.join(REGISTRY_FILE), &next)?;
+    persist_json(
+      &self.data_dir.join(INSTALLED_CAPABILITIES_DIR).join(REGISTRY_FILE),
+      &next,
+    )?;
     *registry = next;
     Ok(installed)
   }
@@ -156,7 +178,10 @@ impl PlatformState {
       .find(|capability| capability.manifest.id == id)
       .ok_or_else(|| "能力尚未安装".to_string())?;
     capability.enabled = enabled;
-    persist_json(&self.data_dir.join(REGISTRY_FILE), &next)?;
+    persist_json(
+      &self.data_dir.join(INSTALLED_CAPABILITIES_DIR).join(REGISTRY_FILE),
+      &next,
+    )?;
     *registry = next;
     Ok(())
   }
@@ -172,7 +197,10 @@ impl PlatformState {
     if next.capabilities.len() == before {
       return Err("能力尚未安装".into());
     }
-    persist_json(&self.data_dir.join(REGISTRY_FILE), &next)?;
+    persist_json(
+      &self.data_dir.join(INSTALLED_CAPABILITIES_DIR).join(REGISTRY_FILE),
+      &next,
+    )?;
     *registry = next;
     Ok(())
   }

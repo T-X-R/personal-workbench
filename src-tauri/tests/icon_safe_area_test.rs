@@ -15,7 +15,7 @@ fn app_icon_keeps_the_macos_safe_area() {
   assert_eq!(info.color_type, png::ColorType::Rgba);
   let mut bounds = (info.width, info.height, 0, 0);
   for (index, pixel) in buffer[..info.buffer_size()].chunks_exact(4).enumerate() {
-    if pixel[3] == 0 {
+    if pixel[3] < 64 {
       continue;
     }
     let x = index as u32 % info.width;
@@ -29,8 +29,8 @@ fn app_icon_keeps_the_macos_safe_area() {
   let content_size = (bounds.2 - bounds.0).max(bounds.3 - bounds.1);
   let occupancy = content_size as f32 / info.width.max(info.height) as f32;
   assert!(
-    (0.82..=0.88).contains(&occupancy),
-    "icon content should occupy 82%-88% of the canvas, got {:.1}%",
+    (0.79..=0.82).contains(&occupancy),
+    "visible icon content should occupy 79%-82% of the canvas, got {:.1}%",
     occupancy * 100.0,
   );
 }

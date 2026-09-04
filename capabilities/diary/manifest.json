@@ -1,0 +1,19 @@
+{
+  "id": "com.personal.diary",
+  "version": "0.1.0",
+  "name": "日记",
+  "description": "记录每天值得留下的事情。",
+  "locales": {
+    "zh": {
+      "name": "日记",
+      "description": "记录每天值得留下的事情。"
+    },
+    "en": {
+      "name": "Journal",
+      "description": "Keep the moments from each day."
+    }
+  },
+  "entrypoints": ["page", "widget"],
+  "permissions": ["storage", "activity.write"],
+  "minPlatformVersion": "0.1.0"
+}
