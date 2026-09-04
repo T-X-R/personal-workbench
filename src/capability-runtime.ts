@@ -3,6 +3,7 @@ import {
   listCapabilities as listNativeCapabilities,
   setCapabilityEnabled as setNativeCapabilityEnabled,
   uninstallCapability as uninstallNativeCapability,
+  updateCapability as updateNativeCapability,
 } from './capability-host'
 import type { CapabilityModule, InstalledCapability } from '../packages/capability-contract/src'
 
@@ -100,9 +101,34 @@ function readBrowserDisabledIds(): string[] {
 
 export async function getInstalledCapabilityPackagesWithState(): Promise<InstalledCapability[]> {
   const installed = await listInstalledCapabilityPackages()
-  if (isDesktopHost()) return installed
+  if (isDesktopHost()) {
+    const availableById = new Map(availableCapabilities.map((capability) => [capability.manifest.id, capability]))
+    let changed = false
+    for (const capability of installed) {
+      const available = availableById.get(capability.manifest.id)
+      if (available && isNewerVersion(available.manifest.version, capability.manifest.version)) {
+        await updateNativeCapability(available.manifest)
+        changed = true
+      }
+    }
+    return changed ? listNativeCapabilities() : installed
+  }
   const disabledIds = new Set(readBrowserDisabledIds())
   return installed.map((capability) => ({ ...capability, enabled: !disabledIds.has(capability.manifest.id) }))
+}
+
+function isNewerVersion(candidate: string, current: string): boolean {
+  const parse = (version: string) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+    return match ? match.slice(1).map(Number) : null
+  }
+  const candidateParts = parse(candidate)
+  const currentParts = parse(current)
+  if (!candidateParts || !currentParts) return false
+  for (let index = 0; index < candidateParts.length; index += 1) {
+    if (candidateParts[index] !== currentParts[index]) return candidateParts[index] > currentParts[index]
+  }
+  return false
 }
 
 export async function uninstallCapabilityPackage(id: string): Promise<void> {

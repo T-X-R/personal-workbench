@@ -40,3 +40,32 @@ When the platform language or theme changes, `subscribe` immediately notifies ev
 ```
 
 A Capability Package should also provide a name and description under `locales.zh` and `locales.en` in `manifest.json`. The platform uses these values in the capability catalog, Today entry point, and top bar. If a localized field is missing, the platform falls back to the top-level Manifest `name` or `description`.
+
+## Read today's Codex session source
+
+A Capability that owns Codex session processing can request `codex.sessions.read` and read the current local date partition through the Capability Host:
+
+```ts
+const source = await host.codex.sessions.readTodayFiles()
+```
+
+The host resolves the system's current local date and returns raw JSONL text from only that date's active and archived session directories. It validates installation state, enablement, and permission, but does not interpret session events. Parsing and any derived behavior remain owned by the Capability Package.
+
+## Publish a document
+
+Capabilities that produce durable documents declare `documents.publish` and submit a Document Publication through the platform-owned Document Gateway:
+
+```ts
+await host.documents.publish({
+  key: '2026-09-04',
+  title: '2026-09-04 Daily review',
+  collectionKey: 'daily-reviews',
+  collectionName: 'Daily reviews',
+  documentDate: '2026-09-04',
+  content: '# Daily review',
+})
+```
+
+`key` and `collectionKey` are lowercase stable identifiers, not paths. The Gateway handles permission checks, assigns the Capability namespace, validates the publication, and passes it to platform persistence and indexing. Reusing the same key for the same date updates the document in place. Disablement and uninstallation block new publications but do not delete published documents.
+
+The Document Gateway is separate from `host.ai`. Workbench never assumes that every model response is a durable document; the Capability decides when a result is ready to publish without knowing how the platform stores or displays it.

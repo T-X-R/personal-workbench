@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { CapabilityLanguage, CapabilityManifest, CapabilityModule, CapabilityPageProps } from '../../packages/capability-contract/src'
 import manifestJson from './manifest.json'
+import { migrateDiaryEntriesToLibrary, persistDiaryEntry, type DiaryEntry } from './diary-store'
 import './styles.css'
-
-type DiaryEntry = {
-  id: string
-  date: string
-  title: string
-  content: string
-  updatedAt: string
-}
 
 const manifest: CapabilityManifest = manifestJson
 
@@ -106,6 +99,7 @@ function DiaryPage({ host }: CapabilityPageProps) {
         setSelectedId(nextEntries[0].id)
         setDraft(nextEntries[0])
       }
+      void migrateDiaryEntriesToLibrary(host, nextEntries, environment.language).catch(() => undefined)
       setLoading(false)
     })
     return () => { cancelled = true }
@@ -132,10 +126,8 @@ function DiaryPage({ host }: CapabilityPageProps) {
     }
     setSaving(true)
     const nextEntry = { ...draft, title: draft.title.trim(), updatedAt: new Date().toISOString() }
-    const nextEntries = [nextEntry, ...entries.filter((entry) => entry.id !== nextEntry.id)]
     try {
-      await host.storage.set('entries', nextEntries)
-      await host.activity.write({ type: 'diary.entry.saved', title: nextEntry.title || copy.untitled, payload: { entryId: nextEntry.id, date: nextEntry.date } })
+      const nextEntries = await persistDiaryEntry(host, entries, nextEntry, copy.untitled)
       setEntries(nextEntries)
       setSelectedId(nextEntry.id)
       setDraft(nextEntry)

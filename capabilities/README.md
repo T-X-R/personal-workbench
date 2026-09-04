@@ -10,6 +10,8 @@ A package must contain at least:
 
 A Capability Package accesses platform services exclusively through `CapabilityHost`. It must not import `App.tsx`, the Tauri API, or the platform database. To add a capability, add a child directory; the Workbench discovers it at runtime.
 
+Only packages that create durable documents declare `documents.publish`. They publish through `host.documents.publish()` and do not depend on Document Library paths, storage, indexing, or UI code.
+
 To follow the platform language and theme:
 
 - Declare `locales.zh` and `locales.en` in `manifest.json` so the platform shell can display a localized capability name and description.

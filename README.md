@@ -11,12 +11,17 @@ The initial release includes the React interface and a Tauri 2 desktop host. The
 - Persistent theme, language, and globally selected AI Provider preferences.
 - A stable `CapabilityHost.environment` interface that lets installed Capability pages follow platform language and Light/Dark changes without importing shell state.
 - Capability registration, listing, enablement, disablement, and uninstallation.
-- A discovered `capabilities/` catalog with an installable Diary package; installed state is kept separately from package source.
+- A platform-owned Document Gateway and Document Library that retain published Markdown by source, collection, and month after the source Capability is uninstalled.
+- A discovered `capabilities/` catalog with installable Diary and Codex Daily Review packages; installed state is kept separately from package source.
 - A host-owned `ai.invoke` interface guarded by installation, enablement, and `ai.invoke` permission checks.
 - Direct Responses-compatible requests for managed API key Providers.
 - Codex CLI execution for Codex subscription tasks.
 
 The first production Capability lives at `capabilities/diary`. Its editor, storage, and activity-event logic are package-owned. The Workbench discovers package entry points without importing Diary business code into the shell. Local `.capability.zip` extraction remains a later installer boundary; browser preview and the desktop registry both keep install state independent from the catalog.
+
+Codex Daily Review lives at `capabilities/codex-daily-review`. It owns session parsing, task extraction, prompt construction, and presentation. The platform only provides permission-checked access to raw files from today's Codex session partition and the shared AI Provider interface.
+
+Capabilities that generate long-lived documents declare `documents.publish` and call `host.documents.publish()`. The Document Gateway assigns the source namespace, validates stable collection and document keys, and sends the Markdown to the platform-owned Document Library. Capabilities never provide arbitrary filesystem paths or depend on library UI and persistence code. Publishing the same key again updates the existing document; uninstalling a Capability retains its published documents.
 
 Installing or uninstalling a Capability changes only its registry entry. Capability data is namespaced by Capability ID and is retained on uninstall, so the platform and other installed Capabilities continue to work unchanged. The checked-in `installed-capabilities/` directory documents the separate installed-package boundary used by the desktop data directory.
 
@@ -37,6 +42,10 @@ Open **Settings → AI Provider** and choose one of the available sources:
 - **Codex subscription** uses `~/.codex/config.toml` and the login session managed by the local Codex CLI.
 
 Workbench persists only the Provider selection. An API key remains inside the desktop host and is never returned to the frontend, copied into the platform registry, or passed to a Capability. Workbench does not read Codex `auth.json`.
+
+## Runtime logs
+
+Development and release builds write operational logs to `~/Library/Logs/com.personal.workbench/Workbench.log`. Logs use local timestamps, rotate at 2 MB, and retain the three most recent files. They record lifecycle events, Capability IDs, Provider stages, HTTP metadata, byte counts, durations, and error categories. They never record credentials, Authorization headers, raw Codex sessions, complete prompts, or Provider response text.
 
 ## Invoke AI from a Capability
 
@@ -86,6 +95,8 @@ npm run desktop:build:dmg
 
 ```sh
 npm run build
+npm run test:platform
+npm run test:capabilities
 cd src-tauri
 cargo test --offline
 cargo clippy --offline -- -D warnings
